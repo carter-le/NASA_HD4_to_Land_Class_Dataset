@@ -63,9 +63,9 @@ where HDF_to_Data_arg.py is the script, LegalAmazonArea.json is the boundary fil
 
 An overview of components of the script HDF_to_Data_arg.py
 
-*Please note that while I go over many of the lines, I do not go over all the lines of code - please see the file for complete code*.
+*Please note that while I go over many of the lines, I do not go over all the lines of code - please see the file for complete code* *(including code comments).*
 
-Instead of hard-coding many decisions and inputs, I use argparse to allow users to specify the files they would like to use and the name of the table they would like to create in the database which will be created. 
+Instead of hard-coding many decisions and inputs, I use argparse to allow users to specify the source files they would like to use and the name of the table they would like to create in the database which will be created. I include an optional user input -cleardata, which, if used and if there is a a table with the same name as the one the user specifies, clears the data from the table before imputing any data. 
 
 If you want to allow users to make additional decisions - for example, letting the user decide which SUBDATASET to use - you would need to make another parser argument. 
 
@@ -82,7 +82,7 @@ parser.add_argument('-cleardata', type=str, help='Specifying cleardata means you
 args = parser.parse_args()
 ```
 
-I then set parameters using the user-defined arguments , and set up the folder structure. 
+I then set parameters using the user-defined arguments , and set up a folder structure for the files I create. 
 
 ``` python
 sourcefilefolder = args.sourcefolder
@@ -151,31 +151,31 @@ for filename in os.listdir(sourcefilefolder):
         continue
 ```
 
-Now that the GeoTIFF images have been created for the HDF files, a user-specified table will be created in your phpMyAdmin SQL database and the data extracted from the TIFF images will be written to that table. 
+Now that the GeoTIFF images have been created for the HDF files, a user-specified table needs to be created in your phpMyAdmin SQL database and the data extracted from the TIFF images will be written to that table. 
 
-The following definition clears the data from the data table if that table already exists and if the user specifies they want the data cleared (from the -cleardata argument). Otherwise, the data will be appended. If you wanted to use this code for multiple sets of HDF files and store them in your database as different tables you can do so, because each time you create a new user defined prefix for the table. For example, if you had a set of HDF files for South America and a set for Africa and wanted those to be in two separate tables, you could run the script with for each set and give different table prefixes such that the script will build you a new table each time. Please be aware that this code presents a risk for python injection (I am still working on a solution to this problem).
+The following definition drops the data table if that table already exists and if the user specifies they want the data cleared (from the -cleardata argument). Otherwise, the data will be appended. If you wanted to use this code for multiple sets of HDF files and store them in your database as different tables you can do so, because each time you create a new user defined prefix for the table. For example, if you had a set of HDF files for South America and a set for Africa and wanted those to be in two separate tables, you could run the script with for each set and give different table prefixes such that the script will build you a new table each time. Please be aware that this code presents some risk for python injection, but this risk is minimized because the user is likely an internal entity. 
 
 The use of tokens is to take a group of data and dump it into the database at once. This simply limits the amount of times you are connecting to the database and can make the script run faster. I wrote this definition to be used further down in the code. Note that two data columns are created but not populated at this time: geo_point and pixel_point. 
 
 ``` python
 def WriteToDatabase():   
     
-    conn = pymysql.connect(host=config.sample.c['host'], port=3306, 	user=config.sample.c['user'], passwd=config.sample.c['passwd'], database=config.c['database'], autocommit=True)
+    conn = pymysql.connect(host=config.sample.c['host'], port=3306, user=config.sample.c['user'], passwd=config.sample.c['passwd'], database=config.c['database'], autocommit=True)
                              
     
     tablename = args.tableprefix+'Points'
     
     if args.cleardata is not None: 
-        sql = '''drop table if exists `%s`'''
+        sql = '''drop table if exists `'''+tablename+'''` '''
         cur = conn.cursor(pymysql.cursors.DictCursor)
         cur.execute(sql, tablename)
         conn.commit()
         cur.close()  
         
-        sql2 = '''create table `%s` (ID int NOT NULL AUTO_INCREMENT PRIMARY KEY, geo_location varchar(50), pixel_location varchar(50), land_class int(2), sample_id int(4), geo_point POINT, pixel_point POINT);'''
+        sql2 = '''create table `'''+tablename+'''`` (ID int NOT NULL AUTO_INCREMENT PRIMARY KEY, geo_location varchar(50), pixel_location varchar(50), land_class int(2), sample_id int(4), geo_point POINT, pixel_point POINT);'''
                 
         cur = conn.cursor(pymysql.cursors.DictCursor)
-        cur.execute(sql2,tablename)
+        cur.execute(sql2)
         conn.commit()
         cur.close()          
         
@@ -258,7 +258,7 @@ I then use the gdal module in python to gather the basic file dimension data usi
         xoffset, px_w, rot1, yoffset, px_h, rot2 = ds.GetGeoTransform()
 ```
 
-I then load the image into memory using Image from the PIL module in python. This is very important because if you try to get the land class data by calling gdal in the command line for each pixel, the image is loaded into memory for every single pixel (and there are millions of pixels per file) - the process is debilitatingly slow. The Image from PIL module allows you to query based on pixel, which is used later in the code.
+I then load the image into memory using Image from the PIL module in python. This is very important because if you try to get the land class data by calling gdal in the command line for each pixel, the image is loaded into memory for every single pixel (and there are millions of pixels per file) - the process is debilitatingly slow. The Image from the PIL module allows you to query based on pixel, which is used later in the code.
 
 ```python
         im = Image.open(tifpath+'/'+filename)
@@ -276,7 +276,7 @@ I then use the iterate through all the pixels in the pixellist I previously crea
 
             pixel = 'POINT(' + str(P) + ' ' + str(L) + ')'
 
-            # supposing x and y are your pixel coordinates, this is how to get the coordinates in space.
+            # supposing P and L are your pixel coordinates, this is how to get the X and Y coordinates in space.
             posX = px_w * P + rot1 * L + xoffset
             posY = rot2 * L + px_h * P + yoffset
 
@@ -300,7 +300,7 @@ At this point I use the image I have loaded into memory using Image to extract t
 
 ```
 
-All of the parameters I have gathered into the tokens list and, when the blocksize has been met, are written to the tokens.txt file. 
+All of the parameters I gather into the tokens list and, when the blocksize has been met, the list of lists is written to the tokens.txt file. The WriteToDatabase() definition is then used to upload the data (at this point in the tokens text file) to the SQL database. 
 
 ```python
             tokens.append((lonlat,pixel,landclass,sample))
@@ -319,10 +319,10 @@ if len(tokens) >= 0:
 
 
 
-I then update the SQL table, setting the two un-written columns to phpMyAdmin Point variables for geo_location and pixel_location. phpMyAdmin allows you to query points which are in or out of a boundary of points, which I will use in the second script to query based on shapefiles of geographic regions. 
+I then update the SQL table, setting the two unpopulated columns to phpMyAdmin Point variables for geo_location and pixel_location. phpMyAdmin allows you to query points which are in or out of a boundary of points, which I will use in the second script to query based on shapefiles of geographic regions. 
 
 ```python
-sql =''' UPDATE `%s` SET geo_point = ST_GeomFromText(testtable.geo_location), pixel_point = ST_GeomFromText(testtable.pixel_location);'''
+sql sql =''' UPDATE `'''+tablename+'''` SET geo_point = ST_GeomFromText(testtable.geo_location), pixel_point = ST_GeomFromText(testtable.pixel_location);'''
 
 cur = conn.cursor(pymysql.cursors.DictCursor)
 cur.executem(sql, tablename)
@@ -340,11 +340,13 @@ An overview of components of the script  Query_Data_arg.py
 
 *Please note that while I go over many of the lines, I do not go over all the lines of code - please see the file for complete code*.
 
-After installing the modules I have set up the user arguments. I have three user arguments but find it pertinent to explain the last one. argyears takes multiple years separated by spaces. If can take one year, e.g. 2010, or multiple years, e.g. 2010 2011 2012. Since it is a mandatory argument the user does not specify argyears, and they are required to specify at least one year. 
+After installing the modules I have set up the user arguments. I have three user arguments but find it pertinent to explain the last one. argyears takes multiple years separated by spaces. If can take one year, e.g. 2010, or multiple years, e.g. 2010 2011 2012. Since it is a mandatory argument the user does not specify argyears as an optional argument, they are required to specify at least one year. 
 
 ```python
 parser = argparse.ArgumentParser(description='Here the user must define the boundary file, whether you wish to reduce the boundary (which may be helpfull for very large shapefiles), and the years for which you wish to query data')
-
+parser.add_argument('boundaryfile', type=str,help='The name of the boundary file')
+parser.add_argument('tablename', type=str, help='What is your SQL tablename')
+parser.add_argument('-reduceboundary', type=int, default = 1 ,help='Specifying reduce boundary means you wish to reduce the number of lon/lat points which make up the boundary, by a factor which you specify. The default is 1, which will keep all points. Specifying 2 would cut the number of boundary points in half, and so on.')
 parser.add_argument('argyears', metavar='N', type=int, nargs='+', help='Specify all years for which you would like the data')
 
 args = parser.parse_args()
@@ -358,7 +360,7 @@ boundaryfile = args.boundaryfile
 reduction = args.reduceboundary
 ```
 
-I then open the user-provided boundary file using json.load() and populate newMap, which I then write to a new json file using json.dump(), open the new file - again using json.load() - and defined the variable polygon as WKT. At this point you may need to alter the code to account for your particular boundary file as I did not make this code adaptable to different file formats. Make sure that when you adjust the file you do not change the format of newMap, or you may have issues running the rest of the script. 
+I then open the user-provided boundary file using json.load() and reformat the data into the dictionary newMap, which I then write to a new json file using json.dump(). I open the new file, again using json.load(), and define the variable polygon as well know text (WKT). At this point you may need to alter the code to account for your particular boundary file as I did not make this code adaptable to different file formats. Make sure that when you adjust the file you do not change the format of newMap, or you may have issues running the rest of the script. 
 
 ```python
 with open(boundaryfile) as f:
@@ -378,14 +380,13 @@ newMap['coordinates'][0].append(firstpoint)
 with open('wktboundaryfile.json', 'w') as json_file:
     json.dump(newMap, json_file)
 
-
 with open('wktboundaryfile.json') as f:
     polygon = json.load(f)
 
 polygon = wkt.dumps(polygon, decimals=4)
 ```
 
-I then set up a loop which iterates over each year specified by the user, calling the points within the boundary file for that year by executing the SQL query. Currently the table is hard-coded, and you will need to replace `points2` with your table name (I am still working on making this a user argument).
+I then set up a loop which iterates over each year specified by the user, calling the points within the boundary file for that year by executing the given SQL query. 
 
 ```python
 yearlist = []
@@ -394,7 +395,7 @@ coordslist = []
 n = 0
 for year in argyearlist:
     
-    sql = '''SELECT geo_location, sample_id, land_class FROM `points2` 
+	sql = '''SELECT geo_location, sample_id, land_class FROM `'''+tablename+'''`
     WHERE ST_CONTAINS(GeomFromText(%s), geo_point) 
     AND sample_id = %s'''
     
@@ -405,11 +406,11 @@ for year in argyearlist:
     
 ```
 
-In order to be able to index properly the lines in the cursor must be converted from string type to dictionary type. I do this by creating linedict. I then use landclassdict as an intermediate step which tallies the number of pixels of each land class within the boundary. I also tally totalcount in order to determine land class percent. I use the landclassdict dictionary to populate the classdict dictionaries. Using this method also allows the code to be more adaptive - if your HDF file uses a different classification scheme, this code will accommodate that as I have not hard-coded the land-class text values to their number key values.
+In order to be able to index properly the lines in the cursor must be converted from string type to dictionary type. I do this by converting each line in the curser output to dictionary form, and storing as the variable linedict. I then use landclassdict as an intermediate step which tallies the number of pixels of each land class within the boundary. I also tally totalcount in order to determine land class percent. I use the landclassdict dictionary to populate the classdict dictionaries. Using this method also allows the code to be more adaptive - if your HDF file uses a different classification scheme this code will accommodate you, as I have not hard-coded the land-class text values to their number key values.
 
-Note that I also include an if n = 0 statement which, only for the first iteration of the outer-most loop (see above where n is set), gathers the coordinates as a list and appends them to the coordslist (which is also set above). 
+Note that I also include an if statement which, only for the first iteration of the outer-most loop, gathers the coordinates of the queried points as a list and appends them to the coordslist (which is set above). 
 
- I store the data for each land class in classdict dictionary, which are collectively stored in the classlist list. classlist is then stored as one of the values in the yearlist list, along with the year. 
+ I store the data for each land class in the classdict dictionary, which are collectively stored in the classlist list. classlist is then stored as one of the values in the yearlist list, along with the year. 
 
 ```python
     landclassdict = {}
@@ -453,7 +454,7 @@ Note that I also include an if n = 0 statement which, only for the first iterati
 
 
 
-I then append the gathered data into nested levels of the json output, and print that output using json.dumps(). polydict contains metadata - and you can add data to this or other levels of the output depending on your needs. 
+Once all of the data has been gather in json form, I print the output using json.dumps(). polydict contains metadata - and you can add data to this or other levels of the output depending on your needs. 
 
 ```python
 polydict = {}
@@ -475,4 +476,10 @@ The output is in json format, and should be suitable to using or converting for 
 ## Conclusion
 
 This project can be modified to gather other types of data stored in HDF files, but will work particularly well with the NASA files I build the script around. It is important to note that there are a few limitations to using the data I used. This script and it's end product relies on the data generated by machine learning algorithms which identify land class. The machine learning algorithms are not stable enough to classify a single pixel of land data year-by-year. As those machine learning algorithms advance and become more precise with higher resolution, the potential applications for this script only grows. It is currently best used for broad-level summation land-class projects, and notable progress is being made from this point. Even currently, instead of having to manually observe and classify land in limited areas, a computer can classify the entire world. Having the ability to analyze land-class and it's relation to other factors is valuable for many applications. My personal scope involves analyzing land-degradation and food and environmental security, but this kind of data may be interesting to researchers, lawmakers, environmental groups, analysts, and others. 
+
+
+
+### Find the Source Files I Used:
+
+https://ladsweb.modaps.eosdis.nasa.gov/missions-and-measurements/products/MCD12C1/
 
